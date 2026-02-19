@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Processing</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Image Processing</h1>
+            <p>Dithering & Background Removal</p>
+        </header>
+
+        <main>
+            <div class="upload-section">
+                <div class="upload-box" id="uploadBox">
+                    <input type="file" id="fileInput" accept="image/*" hidden>
+                    <div class="upload-content">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="17 8 12 3 7 8"></polyline>
+                            <line x1="12" y1="3" x2="12" y2="15"></line>
+                        </svg>
+                        <p>Upload Image</p>
+                        <span>PNG or JPG, up to 50MB</span>
+                    </div>
+                </div>
+
+                <div class="operation-selector">
+                    <label>
+                        <input type="radio" name="operation" value="dither" checked>
+                        <span>Dither</span>
+                    </label>
+                    <label>
+                        <input type="radio" name="operation" value="remove_bg">
+                        <span>Remove Background</span>
+                    </label>
+                </div>
+
+                <button id="processBtn" class="btn-primary" disabled>Process</button>
+            </div>
+
+            <div class="status-section" id="statusSection" style="display: none;">
+                <div class="status-message" id="statusMessage"></div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+            </div>
+
+            <div class="results-section" id="resultsSection" style="display: none;">
+                <div class="image-comparison">
+                    <div class="image-box">
+                        <h3>Original</h3>
+                        <img id="originalImage" alt="Original">
+                    </div>
+                    <div class="image-box">
+                        <h3>Processed</h3>
+                        <img id="processedImage" alt="Processed">
+                    </div>
+                </div>
+                <div class="button-group">
+                    <button id="downloadBtn" class="btn-secondary">Download</button>
+                    <button id="resetBtn" class="btn-secondary">New Image</button>
+                </div>
+            </div>
+        </main>
+
+        <footer>
+            <span id="networkStatus"></span>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
