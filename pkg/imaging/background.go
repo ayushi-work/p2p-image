@@ -8,9 +8,12 @@ import (
 
 // BackgroundRemovalOptions contains parameters for background removal
 type BackgroundRemovalOptions struct {
-	Algorithm  string  // "grabcut" or "simple"
-	Threshold  float64 // for simple thresholding (0-1)
-	Iterations int     // for iterative algorithms
+	Algorithm    string  // "grabcut" or "simple"
+	Threshold    float64 // for simple thresholding (0-1)
+	Iterations   int     // for iterative algorithms
+	ColorSigma   float64 // color similarity sigma for edge-preserving smoothing
+	SmoothRadius int     // radius for alpha smoothing
+	Feather      float64 // additional softening (0-1)
 }
 
 // RemoveBackground removes background from an image
@@ -24,6 +27,15 @@ func RemoveBackground(img image.Image, opts BackgroundRemovalOptions) (image.Ima
 	}
 	if opts.Iterations == 0 {
 		opts.Iterations = 5
+	}
+	if opts.ColorSigma == 0 {
+		opts.ColorSigma = 0.12
+	}
+	if opts.SmoothRadius == 0 {
+		opts.SmoothRadius = 3
+	}
+	if opts.Feather < 0 {
+		opts.Feather = 0
 	}
 
 	// For production, this would use GrabCut or ML-based segmentation
@@ -47,8 +59,8 @@ func applySimpleRemoval(img image.Image, opts BackgroundRemovalOptions) (image.I
 
 	output := image.NewRGBA(bounds)
 
-	// Sample corner pixels to estimate background color
-	bgColor := estimateBackgroundColor(img)
+	// Estimate background by sampling border pixels
+	bgColor := estimateBorderBackgroundColor(img)
 
 	// Create alpha mask with edge-aware processing
 	alphaMask := make([][]float64, height)
@@ -62,14 +74,16 @@ func applySimpleRemoval(img image.Image, opts BackgroundRemovalOptions) (image.I
 			c := img.At(bounds.Min.X+x, bounds.Min.Y+y)
 			distance := colorDistance(c, bgColor)
 
-			// Convert distance to alpha (0 = background, 1 = foreground)
-			alpha := clamp(distance/opts.Threshold, 0, 1)
-			alphaMask[y][x] = alpha
+			// Map distance to alpha using smoothstep for softer edges
+			t := clamp(distance/opts.Threshold, 0, 1)
+			// smoothstep: 3t^2 - 2t^3
+			smooth := t * t * (3 - 2*t)
+			alphaMask[y][x] = smooth
 		}
 	}
 
-	// Apply edge-preserving smoothing to alpha mask
-	alphaMask = smoothAlphaMask(alphaMask, width, height, 3)
+	// Apply edge-preserving smoothing to alpha mask using color similarity
+	alphaMask = smoothAlphaMaskWithImage(alphaMask, img, width, height, opts.SmoothRadius, opts.ColorSigma)
 
 	// Generate output with alpha channel
 	for y := 0; y < height; y++ {
@@ -122,7 +136,7 @@ func applyGrabCut(img image.Image, opts BackgroundRemovalOptions) (image.Image, 
 
 	// Iterative refinement
 	for iter := 0; iter < opts.Iterations; iter++ {
-		trimap = refineTrimap(img, trimap, width, height)
+		trimap = refineTrimap(img, trimap, width, height, estimateBorderBackgroundColor(img))
 	}
 
 	// Convert trimap to alpha mask
@@ -180,6 +194,68 @@ func estimateBackgroundColor(img image.Image) color.Color {
 	}
 }
 
+// estimateBorderBackgroundColor samples border pixels and returns their average color
+func estimateBorderBackgroundColor(img image.Image) color.Color {
+	bounds := img.Bounds()
+	width := bounds.Dx()
+	height := bounds.Dy()
+
+	var rSum, gSum, bSum uint64
+	var count uint64
+
+	stepX := 1
+	stepY := 1
+	if width > 200 {
+		stepX = width / 100
+	}
+	if height > 200 {
+		stepY = height / 100
+	}
+
+	// Sample top and bottom rows and left/right columns
+	for x := bounds.Min.X; x < bounds.Max.X; x += stepX {
+		r, g, b, _ := img.At(x, bounds.Min.Y).RGBA()
+		rSum += uint64(r)
+		gSum += uint64(g)
+		bSum += uint64(b)
+		count++
+
+		r, g, b, _ = img.At(x, bounds.Max.Y-1).RGBA()
+		rSum += uint64(r)
+		gSum += uint64(g)
+		bSum += uint64(b)
+		count++
+	}
+	for y := bounds.Min.Y; y < bounds.Max.Y; y += stepY {
+		r, g, b, _ := img.At(bounds.Min.X, y).RGBA()
+		rSum += uint64(r)
+		gSum += uint64(g)
+		bSum += uint64(b)
+		count++
+
+		r, g, b, _ = img.At(bounds.Max.X-1, y).RGBA()
+		rSum += uint64(r)
+		gSum += uint64(g)
+		bSum += uint64(b)
+		count++
+	}
+
+	if count == 0 {
+		return estimateBackgroundColor(img)
+	}
+
+	avgR := rSum / count
+	avgG := gSum / count
+	avgB := bSum / count
+
+	return color.RGBA{
+		R: uint8(avgR >> 8),
+		G: uint8(avgG >> 8),
+		B: uint8(avgB >> 8),
+		A: 255,
+	}
+}
+
 // colorDistance calculates Euclidean distance in RGB space
 func colorDistance(c1, c2 color.Color) float64 {
 	r1, g1, b1, _ := c1.RGBA()
@@ -193,7 +269,8 @@ func colorDistance(c1, c2 color.Color) float64 {
 }
 
 // smoothAlphaMask applies bilateral-like filtering to preserve edges
-func smoothAlphaMask(mask [][]float64, width, height, radius int) [][]float64 {
+// smoothAlphaMaskWithImage performs edge-aware smoothing using color similarity
+func smoothAlphaMaskWithImage(mask [][]float64, img image.Image, width, height, radius int, colorSigma float64) [][]float64 {
 	result := make([][]float64, height)
 	for y := 0; y < height; y++ {
 		result[y] = make([]float64, width)
@@ -204,6 +281,7 @@ func smoothAlphaMask(mask [][]float64, width, height, radius int) [][]float64 {
 			sum := 0.0
 			count := 0.0
 			centerVal := mask[y][x]
+			centerColor := img.At(x+img.Bounds().Min.X, y+img.Bounds().Min.Y)
 
 			for dy := -radius; dy <= radius; dy++ {
 				for dx := -radius; dx <= radius; dx++ {
@@ -212,8 +290,11 @@ func smoothAlphaMask(mask [][]float64, width, height, radius int) [][]float64 {
 
 					if ny >= 0 && ny < height && nx >= 0 && nx < width {
 						val := mask[ny][nx]
-						// Weight by similarity (bilateral filtering concept)
-						weight := math.Exp(-math.Abs(val-centerVal) * 5.0)
+						neighborColor := img.At(nx+img.Bounds().Min.X, ny+img.Bounds().Min.Y)
+						// weight by color similarity and mask similarity
+						colorW := math.Exp(-colorDistance(centerColor, neighborColor) / colorSigma)
+						maskW := math.Exp(-math.Abs(val-centerVal) * 8.0)
+						weight := colorW * maskW
 						sum += val * weight
 						count += weight
 					}
@@ -232,7 +313,7 @@ func smoothAlphaMask(mask [][]float64, width, height, radius int) [][]float64 {
 }
 
 // refineTrimap refines the trimap using neighbor information
-func refineTrimap(img image.Image, trimap [][]int, width, height int) [][]int {
+func refineTrimap(img image.Image, trimap [][]int, width, height int, bgColor color.Color) [][]int {
 	bounds := img.Bounds()
 	result := make([][]int, height)
 	for y := 0; y < height; y++ {
@@ -272,14 +353,24 @@ func refineTrimap(img image.Image, trimap [][]int, width, height int) [][]int {
 				result[y][x] = 0
 			}
 
-			// Also consider color similarity
+			// Also consider color similarity to background
 			centerColor := img.At(bounds.Min.X+x, bounds.Min.Y+y)
-			bgColor := estimateBackgroundColor(img)
-			if colorDistance(centerColor, bgColor) < 0.2 {
+			if colorDistance(centerColor, bgColor) < 0.18 {
 				result[y][x] = 0
 			}
 		}
 	}
 
 	return result
+}
+
+// smoothstep helper (keeps mapping smooth)
+func smoothstep(x float64) float64 {
+	if x <= 0 {
+		return 0
+	}
+	if x >= 1 {
+		return 1
+	}
+	return x * x * (3 - 2*x)
 }
