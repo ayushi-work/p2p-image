@@ -2,9 +2,6 @@
 
 A peer-to-peer image processing system for dithering and background removal, built with Go and libp2p.
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Go Version](https://img.shields.io/badge/go-1.25%2B-blue.svg)
-
 ## Features
 
 - **Floyd-Steinberg & Atkinson Dithering** - High-quality error diffusion algorithms
@@ -174,14 +171,6 @@ go build -race -o p2p-image
 ```bash
 pkill -f p2p-image
 ```
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## License
-
-MIT License - see [LICENSE](LICENSE) file for details
 
 ## Acknowledgments
 
